@@ -1,0 +1,13 @@
+@import url('https://fonts.googleapis.com/css2?family=Fjalla+One&family=Open+Sans&family=Oswald:wght@400;600;700&family=Poppins:wght@400;600;700&display=swap');
+@import "tailwindcss";
+
+/* Default body font (optional override) */
+body {
+  font-family: 'Open Sans', Arial, Helvetica, sans-serif;
+  /* background: #000; */
+}
+
+/* Vidalytics “Powered by” marketing link (same-origin embed UI) */
+.vidalytics-embed-root a[href*="vidalytics.com/powered-by"] {
+  display: none !important;
+}
