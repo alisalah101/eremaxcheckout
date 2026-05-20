@@ -1,5 +1,6 @@
 "use client"
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { getMerchantCredentials } from '@/lib/merchant-credentials'
 
 // TypeScript interfaces
 interface PackageData {
@@ -34,26 +35,6 @@ interface MobiPaySDK {
     clickId?: string;
     init: () => Promise<void>;
     createSession: (payload: unknown) => Promise<{ redirect_url?: string }>;
-}
-
-const DEFAULT_MERCHANT_KEY = "d0e99116-a9a7-11f0-9959-6ec8a208833f";
-const DEFAULT_MERCHANT_PASS = "01c3008116ba50f1e1cf175ed0b37a03";
-
-function resolveMerchantCredentials(): { merchant_key: string; merchant_pass: string } {
-    const envKey = process.env.NEXT_PUBLIC_MERCHANT_KEY;
-    const envPass = process.env.NEXT_PUBLIC_MERCHANT_PASS;
-    const host =
-        typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
-    const isLocalhost =
-        host === "localhost" ||
-        host === "127.0.0.1" ||
-        host === "[::1]";
-
-    const useDefaults = isLocalhost || !envKey || !envPass;
-    return {
-        merchant_key: useDefaults ? DEFAULT_MERCHANT_KEY : envKey,
-        merchant_pass: useDefaults ? DEFAULT_MERCHANT_PASS : envPass,
-    };
 }
 
 const PaymentContainer = (props: PaymentContainerProps) => {
@@ -138,7 +119,7 @@ const PaymentContainer = (props: PaymentContainerProps) => {
         console.log('Order Amount:', order_amount);
         const order_currency = "USD";
         const order_description = "Fortivir Purchase";
-        const { merchant_key, merchant_pass } = resolveMerchantCredentials();
+        const { merchant_key, merchant_pass } = getMerchantCredentials();
 
         // After main checkout, land on first upsell (gateway typically appends payment_id)
         const checkoutOrigin =

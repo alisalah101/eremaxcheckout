@@ -1,5 +1,6 @@
 "use client"
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { getMerchantCredentials } from '@/lib/merchant-credentials'
 
 // TypeScript interfaces
 interface PackageData {
@@ -118,12 +119,12 @@ const PaymentContainer = (props: PaymentContainerProps) => {
         console.log('Order Amount:', order_amount);
         const order_currency = "USD";
         const order_description = "Fortivir Purchase";
-        const merchant_pass = process.env.NEXT_PUBLIC_MERCHANT_PASS;
+        const { merchant_key, merchant_pass } = getMerchantCredentials();
 
         // ✅ Build payload for SDK (SDK handles hashing automatically)
         const sessionPayload = {
             merchant_name: "hopepharma",
-            merchant_key: process.env.NEXT_PUBLIC_MERCHANT_KEY,
+            merchant_key,
             operation: "purchase",
             methods: ["card"],
             order: {

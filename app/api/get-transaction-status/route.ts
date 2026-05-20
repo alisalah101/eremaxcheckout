@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import CryptoJS from "crypto-js";
-
-const MERCHANT_KEY = process.env.NEXT_PUBLIC_MERCHANT_KEY ;
-const MERCHANT_PASS = process.env.NEXT_PUBLIC_MERCHANT_PASS ;
+import { MERCHANT_KEY, MERCHANT_PASS } from "@/lib/merchant-credentials";
 const MOBIBOX_URL = process.env.MOBIBOX_URL || "https://pay.mobibox.io";
 
 export async function POST(req: NextRequest) {
