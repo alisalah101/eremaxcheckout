@@ -188,7 +188,8 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             },
             cancel_url: process.env.NEXT_PUBLIC_BASE_URL || checkoutBase,
             success_url: upsellEntryUrl,
-            url_target: "_self",
+            // After payment, redirect the checkout page (parent), not load /upsell inside the gateway iframe
+            url_target: "_parent",
             return_url: upsellEntryUrl,
             customer: {
                 name: user.name + " " + user.surname,
