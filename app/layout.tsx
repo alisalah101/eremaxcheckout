@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Fjalla_One } from "next/font/google";
 import "./globals.css";
 import Script from "next/script";
+import MobiPayScript from "./components/MobiPayScript";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,11 +33,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        {/* MobiPay SDK */}
-        <Script
-          src="https://sdk.mobibox.io/mobi-pay-sdk.js"
-          strategy="beforeInteractive"
-        />
+        <MobiPayScript />
       </head>
 
       <body

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useReducer, useState } from "react";
+import { saveCheckoutTrackingParams } from "@/lib/tracking-params";
 import PackageForm from "./PackageForm";
 import UserDetailsForm from "./UserDetailsForm";
 import { Files, Lock } from "lucide-react";
@@ -87,11 +88,17 @@ export default function Checkout() {
   };
 
   useEffect(() => {
-    // Track checkout event
-    if (typeof window !== 'undefined' && window.fbq) {
-      window.fbq('track', 'InitiateCheckout')
+    if (typeof window === "undefined") return;
+
+    const saved = saveCheckoutTrackingParams(window.location.search);
+    if (saved.clickid || saved.pid) {
+      console.log("Checkout tracking params saved to session:", saved);
     }
-  }, [])
+
+    if (window.fbq) {
+      window.fbq("track", "InitiateCheckout");
+    }
+  }, []);
 
   useEffect(() => {
     console.log("data", state);

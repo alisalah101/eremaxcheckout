@@ -10,6 +10,7 @@ export default function UpsellPage() {
         successRedirectPath="/upsell-2"
         pixelContentName="EREMAX_upsell1"
         statusFetchRetries={3}
+        enableS2sCallback
       />
     </Suspense>
   );

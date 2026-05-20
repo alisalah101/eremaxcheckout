@@ -3,6 +3,12 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { upsellBundle, upsellBundle2 } from "../constants/bundle";
+import {
+  getCheckoutTrackingParams,
+  markS2sCallbackSent,
+  saveCheckoutTrackingParams,
+  wasS2sCallbackSent,
+} from "@/lib/tracking-params";
 
 export interface UpsellOfferClientProps {
   /**
@@ -20,6 +26,8 @@ export interface UpsellOfferClientProps {
   statusFetchRetries?: number;
   /** Try `/api/one-click-payment` (Primer) if Mobibox recurring charge fails */
   enablePrimerOneClickFallback?: boolean;
+  /** First upsell only: POST Mobibox S2S callback using checkout `clickid` + `pid` */
+  enableS2sCallback?: boolean;
 }
 
 const MOBIBOX_RECURRING_STORAGE_KEY = "mobiboxRecurringContext";
@@ -59,14 +67,57 @@ export default function UpsellOfferClient({
   priceCents: priceCentsProp,
   statusFetchRetries = 1,
   enablePrimerOneClickFallback = false,
+  enableS2sCallback = false,
 }: UpsellOfferClientProps) {
   const searchParams = useSearchParams();
+  const s2sCallbackSentRef = useRef(false);
 
   useEffect(() => {
     if (window.top && window.top !== window.self) {
       window.top.location.href = window.location.href;
     }
   }, []);
+
+  useEffect(() => {
+    if (!enableS2sCallback || s2sCallbackSentRef.current || wasS2sCallbackSent()) {
+      return;
+    }
+
+    if (typeof window === "undefined") return;
+
+    saveCheckoutTrackingParams(window.location.search);
+    const { clickid, pid } = getCheckoutTrackingParams();
+
+    if (!clickid) {
+      console.warn("Mobibox S2S skipped: no clickid in session or URL");
+      return;
+    }
+
+    s2sCallbackSentRef.current = true;
+
+    fetch("/api/mobibox-s2s-callback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clickid,
+        pid: pid ?? "",
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.error("Mobibox S2S callback error:", data);
+          s2sCallbackSentRef.current = false;
+          return;
+        }
+        markS2sCallbackSent();
+        console.log("Mobibox S2S callback sent:", { clickid, pid });
+      })
+      .catch((err) => {
+        console.error("Mobibox S2S callback request failed:", err);
+        s2sCallbackSentRef.current = false;
+      });
+  }, [enableS2sCallback]);
 
   const [recurringData, setRecurringData] = useState<RecurringData | null>(
     null

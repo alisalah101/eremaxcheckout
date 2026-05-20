@@ -1,6 +1,10 @@
 "use client"
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { getMerchantCredentials } from '@/lib/merchant-credentials'
+import {
+    createInitializedMobiPaySDK,
+    type MobiPaySDKInstance,
+} from '@/lib/mobipay-sdk-client'
 
 // TypeScript interfaces
 interface PackageData {
@@ -31,12 +35,6 @@ interface PaymentContainerProps {
     shouldUpdateSession: boolean;
 }
 
-interface MobiPaySDK {
-    clickId?: string;
-    init: () => Promise<void>;
-    createSession: (payload: unknown) => Promise<{ redirect_url?: string }>;
-}
-
 const PaymentContainer = (props: PaymentContainerProps) => {
     const [isLoading, setLoading] = useState(false);
     const [error, setError] = useState("")
@@ -50,37 +48,36 @@ const PaymentContainer = (props: PaymentContainerProps) => {
         shipment,
     } = props;
 
-    // ✅ MobiPay SDK initialization
-    const sdkRef = useRef<MobiPaySDK | null>(null);
+    const sdkRef = useRef<MobiPaySDKInstance | null>(null);
     const [sdkInitialized, setSdkInitialized] = useState(false);
+    const [sdkInitError, setSdkInitError] = useState("");
 
     const { shouldUpdateSession } = props;
 
-    // ✅ Initialize MobiPay SDK on component mount
     useEffect(() => {
-        if (typeof window !== 'undefined' && (window as { MobiPaySDK?: new (config: { debug: boolean; retries: number; retryDelay: number }) => MobiPaySDK }).MobiPaySDK) {
-            try {
-                const MobiPaySDKConstructor = (window as { MobiPaySDK: new (config: { debug: boolean; retries: number; retryDelay: number }) => MobiPaySDK }).MobiPaySDK;
-                sdkRef.current = new MobiPaySDKConstructor({
-                    debug: true,
-                    retries: 3,
-                    retryDelay: 500
-                });
+        let cancelled = false;
 
-                // Initialize SDK tracking and generate ClickId
-                sdkRef.current.init()
-                    .then(() => {
-                        console.log('✅ MobiPay SDK initialized successfully');
-                        console.log('📍 ClickId generated:', sdkRef.current?.clickId);
-                        setSdkInitialized(true);
-                    })
-                    .catch((err: unknown) => {
-                        console.error('❌ MobiPay SDK init failed:', err);
-                    });
-            } catch (err) {
-                console.error('❌ Error creating MobiPay SDK instance:', err);
-            }
-        }
+        createInitializedMobiPaySDK({ debug: true, retries: 3, retryDelay: 500 })
+            .then((sdk) => {
+                if (cancelled) return;
+                sdkRef.current = sdk;
+                console.log("✅ MobiPay SDK initialized successfully");
+                console.log("📍 ClickId generated:", sdk.clickId);
+                setSdkInitError("");
+                setSdkInitialized(true);
+            })
+            .catch((err: unknown) => {
+                if (cancelled) return;
+                const message =
+                    err instanceof Error ? err.message : "MobiPay SDK init failed";
+                console.error("❌ MobiPay SDK init failed:", err);
+                setSdkInitError(message);
+                setSdkInitialized(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
 
@@ -146,10 +143,30 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             return;
         }
 
-        if (!sdkRef.current || !sdkRef.current.clickId) {
-            console.error('❌ SDK not initialized or ClickId missing');
-            alert('Payment system not ready. Please refresh the page.');
-            return;
+        if (!sdkRef.current) {
+            try {
+                sdkRef.current = await createInitializedMobiPaySDK({
+                    debug: true,
+                    retries: 3,
+                    retryDelay: 500,
+                });
+                setSdkInitialized(true);
+                console.log("📍 ClickId generated (late init):", sdkRef.current.clickId);
+            } catch (err) {
+                console.error("❌ SDK not initialized or ClickId missing", err);
+                alert(
+                    sdkInitError ||
+                        "Payment system not ready. Please refresh the page."
+                );
+                return;
+            }
+        } else if (!sdkRef.current.clickId) {
+            await sdkRef.current.init();
+            if (!sdkRef.current.clickId) {
+                console.error("❌ ClickId still missing after init()");
+                alert("Payment system not ready. Please refresh the page.");
+                return;
+            }
         }
 
         setLoading(true);
@@ -246,7 +263,7 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             setError("Payment session creation failed. Please try again.");
             setLoading(false);
         }
-    }, [shouldUpdateSession, packageData, user, shipment]);
+    }, [shouldUpdateSession, packageData, user, shipment, sdkInitError]);
 
     // 🧠 Session update logic
     useEffect(() => {
