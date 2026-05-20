@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { upsellBundle, upsellBundle2 } from "../constants/bundle";
 
 export interface UpsellOfferClientProps {
@@ -30,6 +30,13 @@ const poppins = { fontFamily: "'Poppins', sans-serif" };
 const UPSELL_BADGE_URL =
   "https://assets.checkoutchamp.com/Funnel/assets/images/47b52b00-26e8-470a-9fc8-bee3121f4fe5/f57bf90a-2a8c-414e-b873-ebd444a6c929/1745513835-badge.png?versionId=T3vhQH3CtVj5BEbmDY_kM_HE4JnNIQ9a";
 
+/** Navigate the top-level window (breaks out of checkout payment iframe). */
+function navigateTopLevel(path: string) {
+  const url = new URL(path, window.location.origin).href;
+  const target = window.top ?? window;
+  target.location.href = url;
+}
+
 export function UpsellLoadingFallback() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-white px-4">
@@ -45,13 +52,11 @@ export default function UpsellOfferClient({
   variant = "eremax",
   priceCents: priceCentsProp,
 }: UpsellOfferClientProps) {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const topWindow = window.top;
-    if (topWindow && topWindow !== window.self) {
-      topWindow.location.href = window.location.href;
+    if (window.top && window.top !== window.self) {
+      window.top.location.href = window.location.href;
     }
   }, []);
 
@@ -234,7 +239,7 @@ export default function UpsellOfferClient({
           : "?";
         const dest = `${basePath}${queryPrefix}payment_id=${encodeURIComponent(nextPaymentId)}`;
         setTimeout(() => {
-          router.push(dest);
+          navigateTopLevel(dest);
         }, 1500);
       } else {
         throw new Error(data.reason || "Payment was declined");
@@ -250,7 +255,7 @@ export default function UpsellOfferClient({
   };
 
   const skipUpsell = () => {
-    router.push("/thank-you");
+    navigateTopLevel("/thank-you");
   };
 
   const offerCopyEremax = (
