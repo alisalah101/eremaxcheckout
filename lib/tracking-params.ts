@@ -13,24 +13,23 @@ function readParam(params: URLSearchParams, name: string): string | null {
   return value && value.trim() !== "" ? value.trim() : null;
 }
 
-/** Read `clickid` / `pid` from URL (checkout uses lowercase `clickid`). */
+/**
+ * Read affiliate params from checkout URL only.
+ * `clickid` must be lowercase (not MobiPay SDK `ClickId` on payment return).
+ */
 export function parseCheckoutTrackingFromSearch(
   search: string | URLSearchParams
 ): CheckoutTrackingParams {
   const params =
     typeof search === "string" ? new URLSearchParams(search) : search;
 
-  const clickid =
-    readParam(params, "clickid") ||
-    readParam(params, "ClickId") ||
-    readParam(params, "clickId");
-
-  const pid = readParam(params, "pid") || readParam(params, "PID");
-
-  return { clickid, pid };
+  return {
+    clickid: readParam(params, "clickid"),
+    pid: readParam(params, "pid") || readParam(params, "PID"),
+  };
 }
 
-/** Persist tracking params in sessionStorage (not localStorage). */
+/** Persist checkout URL `clickid` / `pid` in sessionStorage (not localStorage). */
 export function saveCheckoutTrackingParams(
   search: string | URLSearchParams
 ): CheckoutTrackingParams {
@@ -61,22 +60,12 @@ export function getCheckoutTrackingParams(): CheckoutTrackingParams {
   };
 }
 
-/** Persist MobiPay SDK ClickId so S2S still works after gateway redirect. */
-export function saveSdkClickId(clickId: string | null | undefined): void {
-  if (typeof window === "undefined" || !clickId?.trim()) return;
-  sessionStorage.setItem(TRACKING_CLICKID_KEY, clickId.trim());
-}
-
-/** Resolve clickid for S2S: URL params first, then session. */
-export function resolveClickidForS2s(
-  search: string | URLSearchParams
-): CheckoutTrackingParams {
-  const fromUrl = saveCheckoutTrackingParams(search);
-  const stored = getCheckoutTrackingParams();
-  return {
-    clickid: fromUrl.clickid || stored.clickid,
-    pid: fromUrl.pid || stored.pid,
-  };
+/**
+ * S2S uses checkout `clickid` / `pid` from session only.
+ * Ignores `ClickId` on /upsell (that is the MobiPay SDK id, not the affiliate clickid).
+ */
+export function resolveClickidForS2s(): CheckoutTrackingParams {
+  return getCheckoutTrackingParams();
 }
 
 export function markS2sCallbackSent(): void {

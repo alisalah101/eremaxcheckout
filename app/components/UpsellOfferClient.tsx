@@ -91,12 +91,13 @@ export default function UpsellOfferClient({
       return;
     }
 
-    const { clickid, pid } = resolveClickidForS2s(window.location.search);
+    const { clickid, pid } = resolveClickidForS2s();
 
     if (!clickid) {
-      console.warn("Mobibox S2S skipped: no clickid in URL or session", {
-        search: window.location.search,
-      });
+      console.warn(
+        "Mobibox S2S skipped: no checkout clickid in session (use ?clickid= on checkout URL)",
+        { upsellSearch: window.location.search }
+      );
       return;
     }
 

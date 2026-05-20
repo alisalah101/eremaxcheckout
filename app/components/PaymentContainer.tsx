@@ -1,7 +1,6 @@
 "use client"
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { getMerchantCredentials } from '@/lib/merchant-credentials'
-import { saveSdkClickId } from '@/lib/tracking-params'
 import {
     createInitializedMobiPaySDK,
     type MobiPaySDKInstance,
@@ -62,9 +61,8 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             .then((sdk) => {
                 if (cancelled) return;
                 sdkRef.current = sdk;
-                saveSdkClickId(sdk.clickId);
                 console.log("✅ MobiPay SDK initialized successfully");
-                console.log("📍 ClickId generated:", sdk.clickId);
+                console.log("📍 MobiPay SDK ClickId (not used for S2S):", sdk.clickId);
                 setSdkInitError("");
                 setSdkInitialized(true);
             })
@@ -152,9 +150,8 @@ const PaymentContainer = (props: PaymentContainerProps) => {
                     retries: 3,
                     retryDelay: 500,
                 });
-                saveSdkClickId(sdkRef.current.clickId);
                 setSdkInitialized(true);
-                console.log("📍 ClickId generated (late init):", sdkRef.current.clickId);
+                console.log("📍 MobiPay SDK ClickId (late init, not used for S2S):", sdkRef.current.clickId);
             } catch (err) {
                 console.error("❌ SDK not initialized or ClickId missing", err);
                 alert(
