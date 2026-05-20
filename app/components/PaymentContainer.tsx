@@ -40,7 +40,6 @@ interface MobiPaySDK {
 const PaymentContainer = (props: PaymentContainerProps) => {
     const [isLoading, setLoading] = useState(false);
     const [error, setError] = useState("")
-    const [iframeUrl, setIframeUrl] = useState<string | null>(null);
 
     const {
         package: packageData,
@@ -143,7 +142,7 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             },
             cancel_url: process.env.NEXT_PUBLIC_BASE_URL || checkoutBase,
             success_url: upsellEntryUrl,
-            url_target: "_top",
+            url_target: "_self",
             return_url: upsellEntryUrl,
             customer: {
                 name: user.name + " " + user.surname,
@@ -186,10 +185,8 @@ const PaymentContainer = (props: PaymentContainerProps) => {
                 // Store package data before redirect
                 localStorage.setItem('latestPackage', JSON.stringify(packageData));
 
-                // ✅ DIRECT REDIRECT - This solves CSP issues
-                console.log('🔄 Redirecting to payment gateway:', response.redirect_url);
-                setIframeUrl(response.redirect_url);
-                setLoading(false);
+                console.log('🔄 Redirecting to payment gateway (top-level):', response.redirect_url);
+                window.location.href = response.redirect_url;
             } else {
                 console.error("❌ No redirect_url found in API response.");
                 setError("Failed to create payment session");
@@ -247,30 +244,13 @@ const PaymentContainer = (props: PaymentContainerProps) => {
 
     return (
         <div className='w-full text-center'>
-            {!iframeUrl && (
-                <button
-                    onClick={handleCustomButtonClick}
-                    className="bg-[#ffd712] h-[100px] w-full min-w-[340px] flex flex-col items-center justify-center gap-2 rounded-lg shadow-lg text-center hover:bg-[#ffdb28] transition-colors"
-                >
-                    <p className="font-bold">COMPLETE PURCHASE</p>
-                    <p>TRY IT RISK FREE! - 90 DAY MONEY BACK GUARANTEE!</p>
-                </button>
-            )}
-
-            {/* 🧩 Payment iframe (only shows when redirect_url exists) */}
-            {iframeUrl && (
-                <div className="mt-6">
-                    <iframe
-                        src={iframeUrl}
-                        width="100%"
-                        height="750"
-                        className="border rounded-lg shadow-md"
-                        allow="payment *; fullscreen"
-                        onLoad={() => console.log("Iframe loaded")}
-                        onError={() => setError("Error loading payment page.")}
-                    />
-                </div>
-            )}
+            <button
+                onClick={handleCustomButtonClick}
+                className="bg-[#ffd712] h-[100px] w-full min-w-[340px] flex flex-col items-center justify-center gap-2 rounded-lg shadow-lg text-center hover:bg-[#ffdb28] transition-colors"
+            >
+                <p className="font-bold">COMPLETE PURCHASE</p>
+                <p>TRY IT RISK FREE! - 90 DAY MONEY BACK GUARANTEE!</p>
+            </button>
         </div>
     );
 }
