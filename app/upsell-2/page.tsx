@@ -10,7 +10,7 @@ export default function Upsell2Page() {
         successRedirectPath="/thank-you"
         pixelContentName="EREMAX_upsell2"
         variant="fertiBloom"
-        statusFetchRetries={4}
+        recurringLoadMode="stored-first"
         enablePrimerOneClickFallback
       />
     </Suspense>

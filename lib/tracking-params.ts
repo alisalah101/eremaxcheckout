@@ -61,6 +61,24 @@ export function getCheckoutTrackingParams(): CheckoutTrackingParams {
   };
 }
 
+/** Persist MobiPay SDK ClickId so S2S still works after gateway redirect. */
+export function saveSdkClickId(clickId: string | null | undefined): void {
+  if (typeof window === "undefined" || !clickId?.trim()) return;
+  sessionStorage.setItem(TRACKING_CLICKID_KEY, clickId.trim());
+}
+
+/** Resolve clickid for S2S: URL params first, then session. */
+export function resolveClickidForS2s(
+  search: string | URLSearchParams
+): CheckoutTrackingParams {
+  const fromUrl = saveCheckoutTrackingParams(search);
+  const stored = getCheckoutTrackingParams();
+  return {
+    clickid: fromUrl.clickid || stored.clickid,
+    pid: fromUrl.pid || stored.pid,
+  };
+}
+
 export function markS2sCallbackSent(): void {
   if (typeof window !== "undefined") {
     sessionStorage.setItem(S2S_SENT_KEY, "1");

@@ -4,9 +4,8 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { upsellBundle, upsellBundle2 } from "../constants/bundle";
 import {
-  getCheckoutTrackingParams,
   markS2sCallbackSent,
-  saveCheckoutTrackingParams,
+  resolveClickidForS2s,
   wasS2sCallbackSent,
 } from "@/lib/tracking-params";
 
@@ -22,8 +21,13 @@ export interface UpsellOfferClientProps {
   variant?: "eremax" | "fertiBloom";
   /** Display price in cents; defaults from `upsellBundle` / `upsellBundle2` by variant */
   priceCents?: number;
-  /** Retries for `/api/get-transaction-status` (helps 2nd upsell right after 1st charge) */
+  /** Retries for `/api/get-transaction-status` on first upsell */
   statusFetchRetries?: number;
+  /**
+   * `stored-first`: use session recurring token immediately (upsell 2).
+   * Optional single refresh uses `recurring_init_trans_id`, not URL `payment_id`.
+   */
+  recurringLoadMode?: "default" | "stored-first";
   /** Try `/api/one-click-payment` (Primer) if Mobibox recurring charge fails */
   enablePrimerOneClickFallback?: boolean;
   /** First upsell only: POST Mobibox S2S callback using checkout `clickid` + `pid` */
@@ -68,28 +72,31 @@ export default function UpsellOfferClient({
   statusFetchRetries = 1,
   enablePrimerOneClickFallback = false,
   enableS2sCallback = false,
+  recurringLoadMode = "default",
 }: UpsellOfferClientProps) {
   const searchParams = useSearchParams();
+  const paymentIdParam = searchParams.get("payment_id") ?? "";
   const s2sCallbackSentRef = useRef(false);
+  const recurringLoadStartedRef = useRef(false);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     if (window.top && window.top !== window.self) {
-      window.top.location.href = window.location.href;
+      window.top.location.replace(window.location.href);
+      return;
     }
-  }, []);
 
-  useEffect(() => {
     if (!enableS2sCallback || s2sCallbackSentRef.current || wasS2sCallbackSent()) {
       return;
     }
 
-    if (typeof window === "undefined") return;
-
-    saveCheckoutTrackingParams(window.location.search);
-    const { clickid, pid } = getCheckoutTrackingParams();
+    const { clickid, pid } = resolveClickidForS2s(window.location.search);
 
     if (!clickid) {
-      console.warn("Mobibox S2S skipped: no clickid in session or URL");
+      console.warn("Mobibox S2S skipped: no clickid in URL or session", {
+        search: window.location.search,
+      });
       return;
     }
 
@@ -117,7 +124,7 @@ export default function UpsellOfferClient({
         console.error("Mobibox S2S callback request failed:", err);
         s2sCallbackSentRef.current = false;
       });
-  }, [enableS2sCallback]);
+  }, [enableS2sCallback, paymentIdParam]);
 
   const [recurringData, setRecurringData] = useState<RecurringData | null>(
     null
@@ -172,9 +179,14 @@ export default function UpsellOfferClient({
   }, []);
 
   const fetchRecurringData = useCallback(
-    async (paymentId: string): Promise<boolean> => {
-      setIsFetchingToken(true);
-      setError("");
+    async (
+      paymentId: string,
+      options?: { silent?: boolean }
+    ): Promise<boolean> => {
+      if (!options?.silent) {
+        setIsFetchingToken(true);
+        setError("");
+      }
       try {
         const response = await fetch("/api/get-transaction-status", {
           method: "POST",
@@ -206,7 +218,9 @@ export default function UpsellOfferClient({
         console.error("Error fetching transaction status:", err);
         return false;
       } finally {
-        setIsFetchingToken(false);
+        if (!options?.silent) {
+          setIsFetchingToken(false);
+        }
       }
     },
     [persistRecurringContext]
@@ -239,17 +253,48 @@ export default function UpsellOfferClient({
     ]
   );
 
-  useEffect(() => {
-    const paymentId = searchParams.get("payment_id");
-    if (paymentId) {
-      fetchRecurringDataWithRetries(paymentId);
-    } else {
+  const loadRecurringForPage = useCallback(async () => {
+    if (recurringLoadMode === "stored-first") {
       const stored = loadStoredRecurringContext();
       if (stored) {
         setRecurringData(stored);
+        void fetchRecurringData(stored.recurring_init_trans_id, {
+          silent: true,
+        });
+        return;
       }
+
+      if (paymentIdParam) {
+        await fetchRecurringData(paymentIdParam);
+        return;
+      }
+
+      setError("Payment method not available for one-click purchase");
+      return;
     }
-  }, [searchParams, fetchRecurringDataWithRetries, loadStoredRecurringContext]);
+
+    if (paymentIdParam) {
+      await fetchRecurringDataWithRetries(paymentIdParam);
+      return;
+    }
+
+    const stored = loadStoredRecurringContext();
+    if (stored) {
+      setRecurringData(stored);
+    }
+  }, [
+    recurringLoadMode,
+    paymentIdParam,
+    loadStoredRecurringContext,
+    fetchRecurringData,
+    fetchRecurringDataWithRetries,
+  ]);
+
+  useEffect(() => {
+    if (recurringLoadStartedRef.current) return;
+    recurringLoadStartedRef.current = true;
+    loadRecurringForPage();
+  }, [loadRecurringForPage]);
 
   const chargeMobiboxOneClick = useCallback(async () => {
     if (!recurringData) {
@@ -399,10 +444,17 @@ export default function UpsellOfferClient({
   }, [searchParams, pixelContentName]);
 
   const handleUpsellPurchase = async () => {
-    const paymentId = searchParams.get("payment_id");
-
-    if (!recurringData && paymentId) {
-      await fetchRecurringDataWithRetries(paymentId);
+    if (!recurringData) {
+      if (recurringLoadMode === "stored-first") {
+        const stored = loadStoredRecurringContext();
+        if (stored) {
+          setRecurringData(stored);
+        } else if (paymentIdParam) {
+          await fetchRecurringData(paymentIdParam);
+        }
+      } else if (paymentIdParam) {
+        await fetchRecurringDataWithRetries(paymentIdParam);
+      }
     }
     if (!recurringData) {
       setError("Payment method not available. Please try again.");
@@ -422,11 +474,11 @@ export default function UpsellOfferClient({
             mobiboxResult.payment_id) ||
           nextPaymentId;
       } catch (mobiboxErr) {
-        if (!enablePrimerOneClickFallback || !paymentId) {
+        if (!enablePrimerOneClickFallback || !paymentIdParam) {
           throw mobiboxErr;
         }
         console.warn("Mobibox one-click failed, trying Primer:", mobiboxErr);
-        const primerResult = await chargePrimerOneClick(paymentId);
+        const primerResult = await chargePrimerOneClick(paymentIdParam);
         nextPaymentId = primerResult.paymentId || nextPaymentId;
       }
 
