@@ -16,7 +16,13 @@ export interface UpsellOfferClientProps {
   variant?: "eremax" | "fertiBloom";
   /** Display price in cents; defaults from `upsellBundle` / `upsellBundle2` by variant */
   priceCents?: number;
+  /** Retries for `/api/get-transaction-status` (helps 2nd upsell right after 1st charge) */
+  statusFetchRetries?: number;
+  /** Try `/api/one-click-payment` (Primer) if Mobibox recurring charge fails */
+  enablePrimerOneClickFallback?: boolean;
 }
+
+const MOBIBOX_RECURRING_STORAGE_KEY = "mobiboxRecurringContext";
 
 interface RecurringData {
   recurring_init_trans_id: string;
@@ -51,6 +57,8 @@ export default function UpsellOfferClient({
   pixelContentName = "EREMAX",
   variant = "eremax",
   priceCents: priceCentsProp,
+  statusFetchRetries = 1,
+  enablePrimerOneClickFallback = false,
 }: UpsellOfferClientProps) {
   const searchParams = useSearchParams();
 
@@ -87,45 +95,181 @@ export default function UpsellOfferClient({
     ? "Ferti Bloom — upsell offer"
     : "Fortivir MAX — upsell offer";
 
-  const fetchRecurringData = useCallback(async (paymentId: string) => {
-    setIsFetchingToken(true);
+  const persistRecurringContext = useCallback((data: RecurringData) => {
     try {
-      const response = await fetch("/api/get-transaction-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payment_id: paymentId }),
-      });
+      sessionStorage.setItem(
+        MOBIBOX_RECURRING_STORAGE_KEY,
+        JSON.stringify(data)
+      );
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }, []);
 
-      const data = await response.json();
+  const loadStoredRecurringContext = useCallback((): RecurringData | null => {
+    try {
+      const raw = sessionStorage.getItem(MOBIBOX_RECURRING_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as RecurringData;
+      if (parsed?.recurring_init_trans_id && parsed?.recurring_token) {
+        return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, []);
 
-      if (!response.ok) {
-        console.error("GET_TRANS_STATUS failed:", data);
+  const fetchRecurringData = useCallback(
+    async (paymentId: string): Promise<boolean> => {
+      setIsFetchingToken(true);
+      setError("");
+      try {
+        const response = await fetch("/api/get-transaction-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ payment_id: paymentId }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          console.error("GET_TRANS_STATUS failed:", data);
+          return false;
+        }
+
+        if (data.recurring_token) {
+          const recurring: RecurringData = {
+            recurring_init_trans_id: data.payment_id || paymentId,
+            recurring_token: data.recurring_token,
+          };
+          setRecurringData(recurring);
+          persistRecurringContext(recurring);
+          console.log("Recurring data retrieved successfully");
+          return true;
+        }
+
+        console.warn("No recurring_token in transaction status response");
+        return false;
+      } catch (err) {
+        console.error("Error fetching transaction status:", err);
+        return false;
+      } finally {
+        setIsFetchingToken(false);
+      }
+    },
+    [persistRecurringContext]
+  );
+
+  const fetchRecurringDataWithRetries = useCallback(
+    async (paymentId: string) => {
+      const attempts = Math.max(1, statusFetchRetries);
+      for (let i = 0; i < attempts; i++) {
+        const ok = await fetchRecurringData(paymentId);
+        if (ok) return;
+        if (i < attempts - 1) {
+          await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+        }
+      }
+
+      const stored = loadStoredRecurringContext();
+      if (stored) {
+        setRecurringData(stored);
+        console.log("Using stored recurring context for one-click upsell");
         return;
       }
 
-      if (data.recurring_token) {
-        setRecurringData({
-          recurring_init_trans_id: data.payment_id || paymentId,
-          recurring_token: data.recurring_token,
-        });
-        console.log("Recurring data retrieved successfully");
-      } else {
-        console.warn("No recurring_token in transaction status response");
-        setError("Payment method not available for one-click purchase");
-      }
-    } catch (err) {
-      console.error("Error fetching transaction status:", err);
-    } finally {
-      setIsFetchingToken(false);
-    }
-  }, []);
+      setError("Payment method not available for one-click purchase");
+    },
+    [
+      fetchRecurringData,
+      statusFetchRetries,
+      loadStoredRecurringContext,
+    ]
+  );
 
   useEffect(() => {
     const paymentId = searchParams.get("payment_id");
     if (paymentId) {
-      fetchRecurringData(paymentId);
+      fetchRecurringDataWithRetries(paymentId);
+    } else {
+      const stored = loadStoredRecurringContext();
+      if (stored) {
+        setRecurringData(stored);
+      }
     }
-  }, [searchParams, fetchRecurringData]);
+  }, [searchParams, fetchRecurringDataWithRetries, loadStoredRecurringContext]);
+
+  const chargeMobiboxOneClick = useCallback(async () => {
+    if (!recurringData) {
+      throw new Error("Payment method not available. Please try again.");
+    }
+
+    const response = await fetch("/api/create-upsell-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...recurringData,
+        upsellProduct: isFertiBloom ? "fertiBloom" : "eremax",
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Payment failed");
+    }
+    if (!data.success) {
+      throw new Error(data.reason || "Payment was declined");
+    }
+    return data;
+  }, [recurringData, isFertiBloom]);
+
+  const chargePrimerOneClick = useCallback(
+    async (paymentId: string) => {
+      const vaultRes = await fetch("/api/vault-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentId }),
+      });
+      const vaultData = await vaultRes.json();
+      if (!vaultRes.ok) {
+        throw new Error(vaultData.error || "Could not load vaulted payment method");
+      }
+
+      const paymentMethodToken =
+        vaultData?.paymentMethod?.paymentMethodToken ||
+        vaultData?.paymentMethod?.token ||
+        vaultData?.paymentMethodToken ||
+        vaultData?.vaultedPaymentMethodId;
+
+      if (!paymentMethodToken) {
+        throw new Error("No vaulted payment method for one-click charge");
+      }
+
+      const amount = resolvedPriceCents;
+      const response = await fetch("/api/one-click-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentMethodToken,
+          amount,
+          currency: "USD",
+          orderId: `upsell-${Date.now()}`,
+          customerId: vaultData?.customerId || vaultData?.customer?.id,
+          description: isFertiBloom
+            ? "Ferti Bloom upsell"
+            : "Fortivir MAX Upsell",
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "One-click payment failed");
+      }
+      return data;
+    },
+    [isFertiBloom, resolvedPriceCents]
+  );
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.fbq) {
@@ -204,6 +348,11 @@ export default function UpsellOfferClient({
   }, [searchParams, pixelContentName]);
 
   const handleUpsellPurchase = async () => {
+    const paymentId = searchParams.get("payment_id");
+
+    if (!recurringData && paymentId) {
+      await fetchRecurringDataWithRetries(paymentId);
+    }
     if (!recurringData) {
       setError("Payment method not available. Please try again.");
       return;
@@ -213,37 +362,32 @@ export default function UpsellOfferClient({
     setError("");
 
     try {
-      const response = await fetch("/api/create-upsell-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...recurringData,
-          upsellProduct: isFertiBloom ? "fertiBloom" : "eremax",
-        }),
-      });
+      let nextPaymentId = recurringData.recurring_init_trans_id;
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Payment failed");
+      try {
+        const mobiboxResult = await chargeMobiboxOneClick();
+        nextPaymentId =
+          (typeof mobiboxResult.payment_id === "string" &&
+            mobiboxResult.payment_id) ||
+          nextPaymentId;
+      } catch (mobiboxErr) {
+        if (!enablePrimerOneClickFallback || !paymentId) {
+          throw mobiboxErr;
+        }
+        console.warn("Mobibox one-click failed, trying Primer:", mobiboxErr);
+        const primerResult = await chargePrimerOneClick(paymentId);
+        nextPaymentId = primerResult.paymentId || nextPaymentId;
       }
 
-      if (data.success) {
-        setSuccess("Payment successful!");
-        const nextPaymentId =
-          (typeof data.payment_id === "string" && data.payment_id) ||
-          recurringData.recurring_init_trans_id;
-        const basePath = successRedirectPath.split("?")[0];
-        const queryPrefix = successRedirectPath.includes("?")
-          ? `${successRedirectPath.slice(successRedirectPath.indexOf("?"))}&`
-          : "?";
-        const dest = `${basePath}${queryPrefix}payment_id=${encodeURIComponent(nextPaymentId)}`;
-        setTimeout(() => {
-          navigateTopLevel(dest);
-        }, 1500);
-      } else {
-        throw new Error(data.reason || "Payment was declined");
-      }
+      setSuccess("Payment successful!");
+      const basePath = successRedirectPath.split("?")[0];
+      const queryPrefix = successRedirectPath.includes("?")
+        ? `${successRedirectPath.slice(successRedirectPath.indexOf("?"))}&`
+        : "?";
+      const dest = `${basePath}${queryPrefix}payment_id=${encodeURIComponent(nextPaymentId)}`;
+      setTimeout(() => {
+        navigateTopLevel(dest);
+      }, 1500);
     } catch (err) {
       console.error("Upsell payment error:", err);
       setError(

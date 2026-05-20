@@ -9,6 +9,7 @@ export default function UpsellPage() {
       <UpsellOfferClient
         successRedirectPath="/upsell-2"
         pixelContentName="EREMAX_upsell1"
+        statusFetchRetries={3}
       />
     </Suspense>
   );

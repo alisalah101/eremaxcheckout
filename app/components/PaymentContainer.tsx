@@ -41,6 +41,8 @@ const PaymentContainer = (props: PaymentContainerProps) => {
     const [isLoading, setLoading] = useState(false);
     const [error, setError] = useState("")
     const [iframeUrl, setIframeUrl] = useState<string | null>(null);
+    const paymentIframeRef = useRef<HTMLIFrameElement>(null);
+    const upsellRedirectRef = useRef<string | null>(null);
 
     const {
         package: packageData,
@@ -94,6 +96,48 @@ const PaymentContainer = (props: PaymentContainerProps) => {
         }
     }, [sdkInitialized, shouldUpdateSession])
 
+    /** When the gateway finishes, /upsell loads inside the iframe — promote to top without flashing Mobibox on the parent window. */
+    const promoteUpsellToTopWindow = useCallback(() => {
+        const upsellPath = upsellRedirectRef.current;
+        if (!upsellPath) return false;
+
+        try {
+            const frameWindow = paymentIframeRef.current?.contentWindow;
+            if (!frameWindow) return false;
+
+            const { origin, pathname, href, search } = frameWindow.location;
+            if (origin !== window.location.origin) return false;
+
+            const onUpsell =
+                pathname === "/upsell" || pathname.startsWith("/upsell/");
+            if (!onUpsell) return false;
+
+            const target = new URL(upsellPath, window.location.origin);
+            if (search) {
+                const params = new URLSearchParams(search);
+                params.forEach((value, key) => {
+                    if (!target.searchParams.has(key)) {
+                        target.searchParams.set(key, value);
+                    }
+                });
+            }
+
+            window.top?.location.replace(target.href);
+            setIframeUrl(null);
+            return true;
+        } catch {
+            return false;
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!iframeUrl) return;
+        const interval = window.setInterval(() => {
+            promoteUpsellToTopWindow();
+        }, 400);
+        return () => window.clearInterval(interval);
+    }, [iframeUrl, promoteUpsellToTopWindow]);
+
     const handleCustomButtonClick = useCallback(async () => {
         console.log('clicked custom button');
 
@@ -128,6 +172,7 @@ const PaymentContainer = (props: PaymentContainerProps) => {
                 : (process.env.NEXT_PUBLIC_BASE_URL || "").replace(/\/$/, "");
         const checkoutBase = checkoutOrigin.replace(/\/$/, "");
         const upsellEntryUrl = `${checkoutBase}/upsell`;
+        upsellRedirectRef.current = upsellEntryUrl;
 
         // ✅ Build payload for SDK (SDK handles hashing automatically)
         const sessionPayload = {
@@ -143,7 +188,7 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             },
             cancel_url: process.env.NEXT_PUBLIC_BASE_URL || checkoutBase,
             success_url: upsellEntryUrl,
-            url_target: "_top",
+            url_target: "_self",
             return_url: upsellEntryUrl,
             customer: {
                 name: user.name + " " + user.surname,
@@ -259,12 +304,16 @@ const PaymentContainer = (props: PaymentContainerProps) => {
             {iframeUrl && (
                 <div className="mt-6">
                     <iframe
+                        ref={paymentIframeRef}
                         src={iframeUrl}
                         width="100%"
                         height="750"
                         className="border rounded-lg shadow-md"
                         allow="payment *; fullscreen"
-                        onLoad={() => console.log("Payment iframe loaded")}
+                        onLoad={() => {
+                            console.log("Payment iframe loaded");
+                            promoteUpsellToTopWindow();
+                        }}
                         onError={() => setError("Error loading payment page.")}
                     />
                 </div>
